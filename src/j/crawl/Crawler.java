@@ -1,10 +1,11 @@
 package j.crawl;
 
+import j.model.Comment;
+import j.util.DateUtil;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 
 import javax.json.*;
-import javax.json.stream.JsonParsingException;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
@@ -13,7 +14,7 @@ import java.util.LinkedList;
 import java.util.List;
 
 public class Crawler {
-    public List<String> crawlComment(String productId, int pageIndex) throws IOException {
+    public List<Comment> crawlComment(String productId, int pageIndex) throws IOException {
         HashMap<String, String> headers = createHeader(productId);
         String url = String.format("https://sclub.jd.com/comment/productPageComments.action" +
                 "?callback=fetchJSON_comment98vv1275&productId=%s&score=0&sortType=5&page=%d&pageSize=10&isShadowSku=0&rid=0&fold=1",
@@ -38,16 +39,22 @@ public class Crawler {
         return header;
     }
 
-    private List<String> parseComment(String jsonString) {
-        LinkedList<String> resultList = new LinkedList<>();
+    private List<Comment> parseComment(String jsonString) {
+        LinkedList<Comment> resultList = new LinkedList<>();
         JsonReader jsonReader = Json.createReader(new StringReader(jsonString));
         try {
             JsonObject jsonObject = jsonReader.readObject();
             JsonArray comments = jsonObject.getJsonArray("comments");
             for (JsonValue comment : comments) {
-                resultList.add(comment.asJsonObject().getString("content"));
+                JsonObject commentJson = comment.asJsonObject();
+                String content = commentJson.getString("content");
+                int replyCount = commentJson.getInt("replyCount");
+                int score = commentJson.getInt("score");
+                int usefulVoteCount = commentJson.getInt("usefulVoteCount");
+                String referenceTime = commentJson.getString("referenceTime");
+                resultList.add(new Comment(replyCount, score, usefulVoteCount, DateUtil.stringToDate(referenceTime), content));
             }
-        } catch (JsonParsingException e) {
+        } catch (Exception e) {
             System.out.printf("Jason parsing error for json string:\n%s\n", jsonString);
         }
 

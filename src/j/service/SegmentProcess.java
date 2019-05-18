@@ -1,28 +1,28 @@
-package j;
+package j.service;
 
 import j.crawl.Crawler;
-import j.segment.Word;
+import j.model.Comment;
 import j.segment.WordSegment;
 import j.segment.WordSegmentFactory;
-import j.statistic.StatisticModel;
-import j.statistic.WordStatistic;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * This class is used to combine word segment, crawl, statistic together to provide an uniform interface
  */
-public class StatisticProcess implements Closeable {
+public class SegmentProcess implements Closeable {
     private ExecutorService threadPool;
     private WordSegment wordSegment;
 
-    public StatisticProcess() {
+    public SegmentProcess() {
         threadPool = Executors.newFixedThreadPool(2);
         wordSegment = WordSegmentFactory.createSegmentor();
     }
@@ -41,16 +41,21 @@ public class StatisticProcess implements Closeable {
      * @return result model
      * @throws InterruptedException thrown by unexpected interrupt of main thread
      */
-    public List<StatisticModel> statisticProduct(String productId, int pageCount) throws InterruptedException {
-        ConcurrentLinkedQueue<List<String>> commentsQueue = new ConcurrentLinkedQueue<>();
+    public List<Comment> crawlProduct(String productId, int pageCount) throws InterruptedException {
+        ConcurrentLinkedQueue<List<Comment>> commentsQueue = new ConcurrentLinkedQueue<>();
+        LinkedList<Comment> result = new LinkedList<>();
         CountDownLatch countDownLatch = new CountDownLatch(pageCount);
-        WordStatistic wordStatistic = new WordStatistic();
-        StatisticProcess.CrawlRunner crawlRunner = new StatisticProcess.CrawlRunner(commentsQueue, productId, pageCount);
-        StatisticProcess.SegmentRunner segmentRunner = new StatisticProcess.SegmentRunner(commentsQueue, wordSegment, wordStatistic, countDownLatch);
+        SegmentProcess.CrawlRunner crawlRunner = new CrawlRunner(commentsQueue, productId, pageCount);
+        SegmentProcess.SegmentRunner segmentRunner = new SegmentRunner(
+                commentsQueue,
+                result,
+                wordSegment,
+                countDownLatch
+        );
         threadPool.execute(crawlRunner);
         threadPool.execute(segmentRunner);
         countDownLatch.await();
-        return wordStatistic.getStatisticResult();
+        return result;
     }
 
     /**
@@ -62,22 +67,26 @@ public class StatisticProcess implements Closeable {
     }
 
     private class SegmentRunner implements Runnable {
-        private ConcurrentLinkedQueue<List<String>> commentsQueue;
-        WordStatistic wordStatistic;
+        private ConcurrentLinkedQueue<List<Comment>> commentsQueue;
         WordSegment wordSegment;
         CountDownLatch countDownLatch;
+        LinkedList<Comment> resultList;
 
-        SegmentRunner(ConcurrentLinkedQueue<List<String>> commentsQueue, WordSegment wordSegment, WordStatistic wordStatistic, CountDownLatch countDownLatch) {
+        SegmentRunner(
+                ConcurrentLinkedQueue<List<Comment>> commentsQueue,
+                LinkedList<Comment> resultList,
+                WordSegment wordSegment,
+                CountDownLatch countDownLatch) {
             this.commentsQueue = commentsQueue;
-            this.wordStatistic = wordStatistic;
             this.countDownLatch = countDownLatch;
+            this.resultList = resultList;
             this.wordSegment = wordSegment;
         }
 
         @Override
         public void run() {
             while (countDownLatch.getCount() > 0) {
-                List<String> comments = commentsQueue.poll();
+                List<Comment> comments = commentsQueue.poll();
                 if (comments == null) {
                     try {
                         Thread.sleep(1000);
@@ -86,9 +95,12 @@ public class StatisticProcess implements Closeable {
                     }
                     continue;
                 }
-                for (String comment : comments) {
-                    List<Word> words = wordSegment.wordSegment(comment);
-                    wordStatistic.addWords(words);
+                for (Comment comment : comments) {
+                    List<String> words = wordSegment.wordSegment(comment.getContent()).stream().distinct().collect(Collectors.toList());
+                    List<String> phrases = wordSegment.phraseSegment(comment.getContent()).stream().distinct().collect(Collectors.toList());
+                    comment.setWords(words);
+                    comment.setPhrases(phrases);
+                    resultList.add(comment);
                 }
                 countDownLatch.countDown();
                 System.out.printf("Current Progress: %d\n", countDownLatch.getCount());
@@ -97,11 +109,11 @@ public class StatisticProcess implements Closeable {
     }
 
     private class CrawlRunner implements Runnable {
-        private ConcurrentLinkedQueue<List<String>> commentsQueue;
+        private ConcurrentLinkedQueue<List<Comment>> commentsQueue;
         private String productId;
         private int pageCount;
 
-        CrawlRunner(ConcurrentLinkedQueue<List<String>> commentsQueue, String productId, int pageCount) {
+        CrawlRunner(ConcurrentLinkedQueue<List<Comment>> commentsQueue, String productId, int pageCount) {
             this.commentsQueue = commentsQueue;
             this.productId = productId;
             this.pageCount = pageCount;
